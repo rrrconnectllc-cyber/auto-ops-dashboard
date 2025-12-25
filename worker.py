@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+from typing import Any, cast
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
@@ -36,7 +37,7 @@ try:
         .eq("severity", "Critical") \
         .execute()
         
-    alerts = response.data
+    alerts = cast(list[dict[str, Any]], response.data)
 
     if alerts:
         print(f"🚨 Found {len(alerts)} new critical alerts!")
