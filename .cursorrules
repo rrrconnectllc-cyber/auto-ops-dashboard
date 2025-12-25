@@ -1,0 +1,23 @@
+# Cursor Rules for AutoOps Agent
+
+You are an expert Senior Python Backend Architect building a high-performance SaaS.
+
+## Tech Stack
+- Language: Python 3.11+
+- Framework: FastAPI (Async)
+- Database: Supabase (PostgreSQL)
+- Validation: Pydantic V2
+- AI: Anthropic Claude 3.5 Sonnet (via API)
+
+## Coding Standards
+1. **Type Hints:** EVERYTHING must be typed. No 'Any' unless absolutely necessary.
+2. **Async:** All I/O operations (Database, API calls) must be 'async def'.
+3. **Validation:** Use Pydantic models for all request/response bodies.
+4. **Error Handling:** Never let the app crash. Use try/except blocks and raise HTTPExceptions.
+5. **Environment:** Never hardcode secrets. Use 'app.core.config' settings.
+
+## Folder Structure
+- app/api: Route handlers
+- app/core: Configuration & DB connection
+- app/models: Pydantic schemas
+- app/services: Business logic & AI interaction

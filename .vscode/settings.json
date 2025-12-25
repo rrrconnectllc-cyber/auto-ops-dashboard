@@ -1,0 +1,16 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages",
+        "${workspaceFolder}/venv/lib/python3.12/site-packages"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "cursorpyright.analysis.autoImportCompletions": true,
+    "cursorpyright.analysis.extraPaths": [
+        "${workspaceFolder}/.venv/lib/python3.12/site-packages",
+        "${workspaceFolder}/venv/lib/python3.12/site-packages"
+    ],
+    "cursorpyright.analysis.typeCheckingMode": "basic"
+}
+

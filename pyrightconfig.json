@@ -1,0 +1,14 @@
+{
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.12",
+    "typeCheckingMode": "basic",
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "pythonVersion": "3.12",
+            "pythonPlatform": "Linux"
+        }
+    ]
+}
+
