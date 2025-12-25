@@ -1,0 +1,29 @@
+name: AutoOps Bot
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # Run every 10 minutes
+  workflow_dispatch:        # Allows you to click "Run Now" manually
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install libraries
+        run: pip install supabase openai python-dotenv requests
+
+      - name: Run Worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python worker.py
