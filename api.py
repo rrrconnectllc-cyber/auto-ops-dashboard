@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
+from typing import Optional, cast
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -12,34 +13,45 @@ key: str | None = os.environ.get("SUPABASE_KEY")
 if not url or not key:
     raise ValueError("Missing required environment variables: SUPABASE_URL and/or SUPABASE_KEY")
 
-assert url is not None and key is not None  # Type narrowing for type checker
-supabase: Client = create_client(url, key)
+# Type narrowing: after validation, url and key are guaranteed to be str
+supabase: Client = create_client(cast(str, url), cast(str, key))
 
-app = FastAPI(title="AutoOps Universal Listener")
+app = FastAPI(title="AutoOps Multi-Tenant API")
 
-# 2. Define the expected data format (The Contract)
-# Any tool sending us data MUST provide at least a source and message.
+# 2. Define expected data
 class AlertPayload(BaseModel):
     source: str
     message: str
-    severity: str = "Critical"  # Default to Critical if not specified
+    severity: str = "Critical"
 
-# 3. The "Door" (Webhook Endpoint)
+# 3. Security Check Function
+async def get_tenant(x_api_key: Optional[str] = Header(None)):
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing API Key")
+    
+    # Check DB for this key
+    response = supabase.table("tenants").select("id", "name").eq("api_key", x_api_key).execute()
+    
+    if not response.data:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+        
+    return response.data[0] # Return the tenant info (id, name)
+
+# 4. The Secure Webhook
 @app.post("/webhook")
-async def receive_alert(alert: AlertPayload):
-    print(f"📥 Received alert from {alert.source}: {alert.message}")
+async def receive_alert(alert: AlertPayload, tenant: dict = Depends(get_tenant)):
+    print(f"📥 Alert from {tenant['name']}: {alert.message}")
     
     try:
-        # Insert into Database
         data = {
+            "tenant_id": tenant["id"],  # Link alert to the specific customer
             "source": alert.source,
             "message": alert.message,
             "severity": alert.severity,
-            "status": "new"  # This triggers your AI Worker!
+            "status": "new"
         }
-        response = supabase.table("raw_alerts").insert(data).execute()
-        
-        return {"status": "success", "msg": "Alert queued for AI Agent"}
+        supabase.table("raw_alerts").insert(data).execute()
+        return {"status": "success", "msg": f"Alert queued for {tenant['name']}"}
         
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -47,4 +59,4 @@ async def receive_alert(alert: AlertPayload):
 
 @app.get("/")
 def health_check():
-    return {"status": "AutoOps Listener is Online"}
+    return {"status": "AutoOps Secure API Online"}
