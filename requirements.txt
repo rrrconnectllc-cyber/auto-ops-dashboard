@@ -1,8 +1,13 @@
+aiohappyeyeballs==2.6.1
+aiohttp==3.13.2
+aiosignal==1.4.0
 altair==6.0.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.0
 attrs==25.4.0
+azure-core==1.37.0
+azure-identity==1.25.1
 blinker==1.9.0
 cachetools==6.2.4
 certifi==2025.11.12
@@ -13,6 +18,7 @@ cryptography==46.0.3
 deprecation==2.1.0
 distro==1.9.0
 fastapi==0.126.0
+frozenlist==1.8.0
 fsspec==2025.12.0
 gitdb==4.0.12
 GitPython==3.1.45
@@ -23,6 +29,7 @@ httpcore==1.0.9
 httpx==0.28.1
 hyperframe==6.1.0
 idna==3.11
+importlib_metadata==8.7.1
 Jinja2==3.1.6
 jiter==0.12.0
 jsonschema==4.25.1
@@ -30,11 +37,20 @@ jsonschema-specifications==2025.9.1
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 mdurl==0.1.2
+microsoft-kiota-abstractions==1.9.7
+microsoft-kiota-authentication-azure==1.9.7
+microsoft-kiota-http==1.9.7
 mmh3==5.2.0
+msal==1.34.0
+msal-extensions==1.3.1
+msgraph-core==1.3.8
 multidict==6.7.0
 narwhals==2.14.0
 numpy==2.4.0
 openai==2.14.0
+opentelemetry-api==1.39.1
+opentelemetry-sdk==1.39.1
+opentelemetry-semantic-conventions==0.60b1
 packaging==25.0
 pandas==2.3.3
 pillow==12.0.0
@@ -65,6 +81,7 @@ smmap==5.0.2
 sniffio==1.3.1
 sortedcontainers==2.4.0
 starlette==0.50.0
+std-uritemplate==2.0.8
 storage3==2.27.0
 streamlit==1.52.2
 StrEnum==0.4.15
@@ -84,3 +101,4 @@ uvicorn==0.38.0
 watchdog==6.0.0
 websockets==15.0.1
 yarl==1.22.0
+zipp==3.23.0

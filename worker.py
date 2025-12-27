@@ -4,6 +4,7 @@ import json
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
+from azure.identity import ClientSecretCredential
 
 # 1. Setup
 load_dotenv()
@@ -11,7 +12,7 @@ url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 slack_url = os.environ.get("SLACK_WEBHOOK_URL")
 
-# Check if keys exist to prevent silent failures
+# Check keys
 if not url or not key:
     print("❌ Error: Missing Supabase credentials")
     exit(1)
@@ -19,18 +20,45 @@ if not url or not key:
 supabase: Client = create_client(url, key)
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# 2. Define "Safe" Actions
+# --- NEW: AZURE SKILLS ---
+def get_intune_device_count():
+    """Logs into Azure and counts devices via the Graph API"""
+    try:
+        print("☁️ Connecting to Azure for live data...")
+        credential = ClientSecretCredential(
+            tenant_id=os.environ.get("AZURE_TENANT_ID"),
+            client_id=os.environ.get("AZURE_CLIENT_ID"),
+            client_secret=os.environ.get("AZURE_CLIENT_SECRET"),
+        )
+        token = credential.get_token("https://graph.microsoft.com/.default")
+        
+        endpoint = "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices"
+        headers = {"Authorization": f"Bearer {token.token}"}
+        
+        response = requests.get(endpoint, headers=headers)
+        if response.status_code == 200:
+            count = len(response.json().get('value', []))
+            return f"✅ SUCCESS: Connected to Intune. Found {count} managed devices."
+        else:
+            return f"⚠️ Azure Error: {response.status_code}"
+    except Exception as e:
+        return f"❌ Connection Failed: {str(e)}"
+
+# 2. Define Actions
 SAFE_COMMANDS = {
     "restart_service": "sudo systemctl restart application",
-    "clear_logs": "truncate -s 0 /var/log/app.log",
-    "clear_cache": "redis-cli FLUSHALL"
+    "clear_logs": "truncate -s 0 /var/log/app.log"
 }
 
-def execute_fix(solution_text):
-    action_taken = "No automated action taken (Manual review required)."
-    if not solution_text: return action_taken
+def execute_fix(solution_text, alert_message):
+    action_taken = "No automated action taken."
     
-    if "restart" in solution_text.lower():
+    # NEW: Check if the alert is asking about Intune/Devices
+    if "intune" in alert_message.lower() or "device count" in alert_message.lower():
+        action_taken = get_intune_device_count()
+        
+    # Existing Linux Checks
+    elif "restart" in solution_text.lower():
         action_taken = f"⚡ EXECUTED: {SAFE_COMMANDS['restart_service']}"
     elif "disk space" in solution_text.lower() or "clear" in solution_text.lower():
         action_taken = f"⚡ EXECUTED: {SAFE_COMMANDS['clear_logs']}"
@@ -42,48 +70,38 @@ def notify_slack(tenant_name, alert_msg, solution, action):
     payload = {
         "text": f"🚨 *Alert ({tenant_name}):* {alert_msg}\n"
                 f"🧠 *AI Analysis:* {solution}\n"
-                f"🛡️ *Auto-Fix:* {action}"
+                f"🛡️ *Action Taken:* {action}"
     }
     try: requests.post(slack_url, json=payload)
     except: pass
 
-print("🤖 AutoOps Cloud Worker (v3) checking for alerts...")
+print("🤖 AutoOps Cloud Worker (Azure Edition) checking for alerts...")
 
 try:
     # 3. Fetch alerts
-    response = supabase.table("raw_alerts") \
-        .select("*, tenants(name)") \
-        .eq("status", "new") \
-        .execute()
-        
+    response = supabase.table("raw_alerts").select("*, tenants(name)").eq("status", "new").execute()
     alerts = response.data
 
     if alerts:
         print(f"🚨 Found {len(alerts)} new alerts!")
         
         for alert in alerts:
-            # --- CRASH FIX: SAFE TENANT CHECK ---
-            # If 'tenants' is None, default to 'Unknown Tenant' safely
             tenant_data = alert.get("tenants")
-            if tenant_data:
-                tenant_name = tenant_data.get("name", "Unknown")
-            else:
-                tenant_name = "Unknown Tenant"
-            # ------------------------------------
+            tenant_name = tenant_data.get("name", "Unknown") if tenant_data else "Unknown Tenant"
 
             print(f"   -> Processing for {tenant_name}: {alert.get('message')}")
             
             try:
                 # 4. Analyze
-                prompt = f"Analyze this server alert and suggest a 1-sentence Linux command to fix it: {alert['message']}"
+                prompt = f"Analyze this alert: '{alert['message']}'. If it asks for device status, say 'Checking Azure Intune'. Otherwise, suggest a Linux fix."
                 ai_resp = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 solution = ai_resp.choices[0].message.content
 
-                # 5. EXECUTE THE FIX
-                action_result = execute_fix(solution)
+                # 5. EXECUTE THE FIX (Now includes Azure!)
+                action_result = execute_fix(solution, alert['message'])
 
                 # 6. Update DB
                 supabase.table("raw_alerts").update({
@@ -91,15 +109,12 @@ try:
                     "ai_solution": solution + f"\n\n[System Log]: {action_result}"
                 }).eq("id", alert["id"]).execute()
                 
-                # 7. Notify
                 notify_slack(tenant_name, alert["message"], solution, action_result)
                 
             except Exception as inner_e:
-                print(f"❌ Error processing alert ID {alert.get('id')}: {inner_e}")
-            
+                print(f"❌ Error processing alert: {inner_e}")
     else:
         print("✅ No new alerts found.")
 
 except Exception as e:
     print(f"❌ FATAL ERROR: {e}")
-    raise e
