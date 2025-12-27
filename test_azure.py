@@ -1,3 +1,5 @@
+# Note: Install azure-identity with: pip install azure-identity
+# Or install all requirements: pip install -r requirements.txt
 import os
 import requests
 from azure.identity import ClientSecretCredential
