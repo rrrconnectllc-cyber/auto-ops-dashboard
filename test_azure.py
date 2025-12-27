@@ -13,10 +13,18 @@ def check_intune():
     
     try:
         # 2. Get the Access Token (The "Badge")
+        tenant_id = os.environ.get("AZURE_TENANT_ID")
+        client_id = os.environ.get("AZURE_CLIENT_ID")
+        client_secret = os.environ.get("AZURE_CLIENT_SECRET")
+        
+        assert tenant_id is not None, "AZURE_TENANT_ID is required"
+        assert client_id is not None, "AZURE_CLIENT_ID is required"
+        assert client_secret is not None, "AZURE_CLIENT_SECRET is required"
+        
         credential = ClientSecretCredential(
-            tenant_id=os.environ.get("AZURE_TENANT_ID"),
-            client_id=os.environ.get("AZURE_CLIENT_ID"),
-            client_secret=os.environ.get("AZURE_CLIENT_SECRET"),
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
         )
         
         # Request a token specifically for the Graph API
