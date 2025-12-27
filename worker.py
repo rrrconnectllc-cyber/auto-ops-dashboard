@@ -28,10 +28,18 @@ def get_intune_device_count():
     """Logs into Azure and counts devices via the Graph API"""
     try:
         print("☁️ Connecting to Azure for live data...")
+        tenant_id = os.environ.get("AZURE_TENANT_ID")
+        client_id = os.environ.get("AZURE_CLIENT_ID")
+        client_secret = os.environ.get("AZURE_CLIENT_SECRET")
+        
+        assert tenant_id is not None, "AZURE_TENANT_ID is required"
+        assert client_id is not None, "AZURE_CLIENT_ID is required"
+        assert client_secret is not None, "AZURE_CLIENT_SECRET is required"
+        
         credential = ClientSecretCredential(
-            tenant_id=os.environ.get("AZURE_TENANT_ID"),
-            client_id=os.environ.get("AZURE_CLIENT_ID"),
-            client_secret=os.environ.get("AZURE_CLIENT_SECRET"),
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
         )
         token = credential.get_token("https://graph.microsoft.com/.default")
         
