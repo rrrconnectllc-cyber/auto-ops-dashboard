@@ -1,9 +1,12 @@
 import os
 import requests
 import json
+from typing import Any, cast
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
+# Note: Install azure-identity with: pip install azure-identity
+# Or install all requirements: pip install -r requirements.txt
 from azure.identity import ClientSecretCredential
 
 # 1. Setup
@@ -86,30 +89,43 @@ try:
         print(f"🚨 Found {len(alerts)} new alerts!")
         
         for alert in alerts:
-            tenant_data = alert.get("tenants")
-            tenant_name = tenant_data.get("name", "Unknown") if tenant_data else "Unknown Tenant"
+            # Type check: ensure alert is a dict
+            if not isinstance(alert, dict):
+                continue
+            
+            alert_dict: dict[str, Any] = cast(dict[str, Any], alert)
+            tenant_data = alert_dict.get("tenants")
+            if isinstance(tenant_data, dict):
+                tenant_name = tenant_data.get("name", "Unknown")
+            else:
+                tenant_name = "Unknown Tenant"
 
-            print(f"   -> Processing for {tenant_name}: {alert.get('message')}")
+            print(f"   -> Processing for {tenant_name}: {alert_dict.get('message')}")
             
             try:
                 # 4. Analyze
-                prompt = f"Analyze this alert: '{alert['message']}'. If it asks for device status, say 'Checking Azure Intune'. Otherwise, suggest a Linux fix."
+                prompt = f"Analyze this alert: '{alert_dict['message']}'. If it asks for device status, say 'Checking Azure Intune'. Otherwise, suggest a Linux fix."
                 ai_resp = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 solution = ai_resp.choices[0].message.content
+                if not solution:
+                    solution = "No solution provided by AI"
+                
+                # Type narrowing: solution is guaranteed to be str at this point
+                solution_str: str = cast(str, solution)
 
                 # 5. EXECUTE THE FIX (Now includes Azure!)
-                action_result = execute_fix(solution, alert['message'])
+                action_result = execute_fix(solution_str, alert_dict['message'])
 
                 # 6. Update DB
                 supabase.table("raw_alerts").update({
                     "status": "processed",
-                    "ai_solution": solution + f"\n\n[System Log]: {action_result}"
-                }).eq("id", alert["id"]).execute()
+                    "ai_solution": solution_str + f"\n\n[System Log]: {action_result}"
+                }).eq("id", alert_dict["id"]).execute()
                 
-                notify_slack(tenant_name, alert["message"], solution, action_result)
+                notify_slack(tenant_name, alert_dict["message"], solution_str, action_result)
                 
             except Exception as inner_e:
                 print(f"❌ Error processing alert: {inner_e}")
