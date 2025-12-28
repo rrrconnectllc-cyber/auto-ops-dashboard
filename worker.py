@@ -137,12 +137,13 @@ def notify_slack(tenant_name, alert_msg, solution, action):
 
 def notify_teams(tenant_name, alert_msg, solution, action):
     if not teams_url: 
-        print("⚠️ DEBUG: Teams URL is MISSING in the environment!")
+        print("⚠️ DEBUG: Teams URL is MISSING!")
         return
     
     print(f"📨 DEBUG: Attempting to send to Teams... (URL starts with {teams_url[:20]}...)")
     
-    # Adaptive Card Logic
+    # --- SIMPLIFIED "SAFE MODE" CARD ---
+    # No FactSets, No Colors, No Containers. Just Text.
     card_payload = {
         "type": "message",
         "attachments": [
@@ -153,50 +154,45 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                     "body": [
                         {
                             "type": "TextBlock",
-                            "size": "Medium",
+                            "size": "Large",
                             "weight": "Bolder",
-                            "text": f"🚨 AutoOps Alert: {tenant_name}",
-                            "color": "Attention"
+                            "text": f"🚨 AutoOps Alert: {tenant_name}"
                         },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Issue:", "value": alert_msg}
-                            ]
-                        },
-                        {"type": "Container", "items": [], "height": "10px"}, 
                         {
                             "type": "TextBlock",
-                            "text": "🧠 AI Analysis:",
+                            "text": f"**Issue:** {alert_msg}",
+                            "wrap": True
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": "________________________________________________________________________________",
+                            "isSubtle": True
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": "**🧠 AI Analysis:**",
                             "weight": "Bolder"
                         },
                         {
                             "type": "TextBlock",
-                            "text": solution[:4000] + ("..." if len(solution) > 4000 else ""),
+                            "text": solution[:3000] + "...", # Safe limit
                             "wrap": True,
-                            "size": "Small",
+                            "size": "Small"
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": "________________________________________________________________________________",
                             "isSubtle": True
                         },
                         {
-                            "type": "Container",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "🛡️ Automated Action Taken:",
-                                    "weight": "Bolder"
-                                },
-                                {
-                                    "type": "TextBlock",
-                                    "text": action,
-                                    "color": "Good" if "SUCCESS" in action else "Warning",
-                                    "wrap": True
-                                }
-                            ],
-                            "style": "emphasis"
+                            "type": "TextBlock",
+                            "text": f"**🛡️ Action Taken:** {action}",
+                            "weight": "Bolder",
+                            "wrap": True
                         }
                     ],
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.2"
+                    "version": "1.4" # Updated to 1.4 for better compatibility
                 }
             }
         ]
@@ -204,10 +200,8 @@ def notify_teams(tenant_name, alert_msg, solution, action):
     
     try:
         r = requests.post(teams_url, json=card_payload)
-        # --- NEW DEBUG LINES ---
         print(f"🔍 TEAMS STATUS CODE: {r.status_code}")
         print(f"📝 TEAMS RESPONSE BODY: {r.text}")
-        # -----------------------
     except Exception as e:
         print(f"❌ TEAMS FATAL ERROR: {e}")
 
