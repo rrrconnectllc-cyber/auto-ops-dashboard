@@ -136,8 +136,11 @@ def notify_slack(tenant_name, alert_msg, solution, action):
     except Exception as e: print(f"Slack Error: {e}")
 
 def notify_teams(tenant_name, alert_msg, solution, action):
-    if not teams_url: return
-    print("📨 Sending Teams Alert...")
+    if not teams_url: 
+        print("⚠️ DEBUG: Teams URL is MISSING in the environment!")
+        return
+    
+    print(f"📨 DEBUG: Attempting to send to Teams... (URL starts with {teams_url[:20]}...)")
     
     # Adaptive Card Logic
     card_payload = {
@@ -148,7 +151,6 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                 "content": {
                     "type": "AdaptiveCard",
                     "body": [
-                        # 1. HEADER
                         {
                             "type": "TextBlock",
                             "size": "Medium",
@@ -156,17 +158,13 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                             "text": f"🚨 AutoOps Alert: {tenant_name}",
                             "color": "Attention"
                         },
-                        # 2. THE ISSUE (Fact)
                         {
                             "type": "FactSet",
                             "facts": [
                                 {"title": "Issue:", "value": alert_msg}
                             ]
                         },
-                        # 3. SEPARATOR
                         {"type": "Container", "items": [], "height": "10px"}, 
-                        
-                        # 4. AI ANALYSIS (Full Text - No Limit)
                         {
                             "type": "TextBlock",
                             "text": "🧠 AI Analysis:",
@@ -175,12 +173,10 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                         {
                             "type": "TextBlock",
                             "text": solution[:4000] + ("..." if len(solution) > 4000 else ""),
-                            "wrap": True,      # Allows text to flow to new lines
+                            "wrap": True,
                             "size": "Small",
                             "isSubtle": True
                         },
-                        
-                        # 5. ACTION BOX (Colored Background)
                         {
                             "type": "Container",
                             "items": [
@@ -196,7 +192,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                                     "wrap": True
                                 }
                             ],
-                            "style": "emphasis" # Gives it the grey background
+                            "style": "emphasis"
                         }
                     ],
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -205,8 +201,15 @@ def notify_teams(tenant_name, alert_msg, solution, action):
             }
         ]
     }
-    try: requests.post(teams_url, json=card_payload)
-    except Exception as e: print(f"Teams Error: {e}")
+    
+    try:
+        r = requests.post(teams_url, json=card_payload)
+        # --- NEW DEBUG LINES ---
+        print(f"🔍 TEAMS STATUS CODE: {r.status_code}")
+        print(f"📝 TEAMS RESPONSE BODY: {r.text}")
+        # -----------------------
+    except Exception as e:
+        print(f"❌ TEAMS FATAL ERROR: {e}")
 
 # --- MAIN LOOP ---
 print("🤖 AutoOps Cloud Worker (Dual-Channel) checking...")
