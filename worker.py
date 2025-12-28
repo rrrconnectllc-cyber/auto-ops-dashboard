@@ -13,19 +13,19 @@ from azure.identity import ClientSecretCredential
 load_dotenv()
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
+
+# LOAD BOTH WEBHOOKS
 slack_url = os.environ.get("SLACK_WEBHOOK_URL")
 teams_url = os.environ.get("TEAMS_WEBHOOK_URL")
-openai_key = os.environ.get("OPENAI_API_KEY")
 
 assert url is not None, "SUPABASE_URL is required"
 assert key is not None, "SUPABASE_KEY is required"
 
 supabase: Client = create_client(url, key)
-client = OpenAI(api_key=openai_key)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # --- HELPER: Generate Strong Password ---
 def generate_password():
-    """Creates a complex password to satisfy Azure requirements"""
     chars = string.ascii_letters + string.digits + "!@#$%"
     return "Aa1!" + "".join(random.choice(chars) for _ in range(12))
 
@@ -47,7 +47,6 @@ def get_azure_token():
     return credential.get_token("https://graph.microsoft.com/.default").token
 
 def get_default_domain(headers):
-    """Fetches your @onmicrosoft.com domain automatically"""
     try:
         r = requests.get("https://graph.microsoft.com/v1.0/domains", headers=headers)
         for domain in r.json().get('value', []):
@@ -57,17 +56,14 @@ def get_default_domain(headers):
         return None
 
 def create_azure_user(name):
-    """Creates a new user in Azure AD"""
     try:
         print(f"☁️ Attempting to onboard: {name}...")
         token = get_azure_token()
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         
-        # 1. Get Domain
         domain = get_default_domain(headers)
         if not domain: return "❌ Error: Could not find Azure Domain."
 
-        # 2. Prepare User Data
         email_nickname = name.lower().replace(" ", ".")
         upn = f"{email_nickname}@{domain}"
         password = generate_password()
@@ -77,13 +73,9 @@ def create_azure_user(name):
             "displayName": name,
             "mailNickname": email_nickname,
             "userPrincipalName": upn,
-            "passwordProfile": {
-                "forceChangePasswordNextSignIn": True,
-                "password": password
-            }
+            "passwordProfile": {"forceChangePasswordNextSignIn": True, "password": password}
         }
 
-        # 3. Create User
         response = requests.post("https://graph.microsoft.com/v1.0/users", headers=headers, json=user_data)
         
         if response.status_code == 201:
@@ -91,7 +83,7 @@ def create_azure_user(name):
         elif "user already exists" in response.text.lower():
             return f"⚠️ User {upn} already exists."
         else:
-            return f"❌ Azure Error: {response.status_code} - {response.text}"
+            return f"❌ Azure Error: {response.status_code}"
 
     except Exception as e:
         return f"❌ Connection Failed: {str(e)}"
@@ -118,18 +110,11 @@ def execute_fix(solution_text, alert_message):
     action_taken = "No automated action taken."
     msg_lower = alert_message.lower()
 
-    # 1. USER ONBOARDING CHECK
-    if "onboard" in msg_lower or "new user" in msg_lower or "hire" in msg_lower:
-        # Extract name simply (assuming message is like "Onboard John Doe")
-        # In a real app, AI would extract the name cleanly.
+    if "onboard" in msg_lower or "new user" in msg_lower:
         name_part = alert_message.split(":")[-1].strip() if ":" in alert_message else "New User"
         action_taken = create_azure_user(name_part)
-
-    # 2. DEVICE CHECK
     elif "intune" in msg_lower or "device count" in msg_lower:
         action_taken = get_intune_device_count()
-        
-    # 3. LINUX CHECKS
     elif "restart" in solution_text.lower():
         action_taken = f"⚡ EXECUTED: {SAFE_COMMANDS['restart_service']}"
     elif "disk space" in solution_text.lower():
@@ -137,13 +122,24 @@ def execute_fix(solution_text, alert_message):
     
     return action_taken
 
+# --- NOTIFICATION CHANNELS ---
+
+def notify_slack(tenant_name, alert_msg, solution, action):
+    if not slack_url: return
+    print("📨 Sending Slack Alert...")
+    payload = {
+        "text": f"🚨 *Alert ({tenant_name}):* {alert_msg}\n"
+                f"🧠 *AI Analysis:* {solution}\n"
+                f"🛡️ *Action Taken:* {action}"
+    }
+    try: requests.post(slack_url, json=payload)
+    except Exception as e: print(f"Slack Error: {e}")
+
 def notify_teams(tenant_name, alert_msg, solution, action):
     if not teams_url: return
-
-    # Adaptive Card Color Logic
-    color = "Good" if "SUCCESS" in action else "Attention"
+    print("📨 Sending Teams Alert...")
     
-    # The "Pretty" Teams Card
+    # Adaptive Card Logic
     card_payload = {
         "type": "message",
         "attachments": [
@@ -163,23 +159,14 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                             "type": "FactSet",
                             "facts": [
                                 {"title": "Issue:", "value": alert_msg},
-                                {"title": "AI Analysis:", "value": solution[:500] + "..." if len(solution) > 500 else solution}
+                                {"title": "AI Analysis:", "value": solution[:500] + "..."}
                             ]
                         },
                         {
                             "type": "Container",
                             "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "🛡️ Automated Action Taken:",
-                                    "weight": "Bolder"
-                                },
-                                {
-                                    "type": "TextBlock",
-                                    "text": action,
-                                    "color": "Good" if "SUCCESS" in action else "Warning",
-                                    "wrap": True
-                                }
+                                {"type": "TextBlock", "text": "🛡️ Automated Action Taken:", "weight": "Bolder"},
+                                {"type": "TextBlock", "text": action, "color": "Good" if "SUCCESS" in action else "Warning", "wrap": True}
                             ],
                             "style": "emphasis"
                         }
@@ -190,13 +177,11 @@ def notify_teams(tenant_name, alert_msg, solution, action):
             }
         ]
     }
-    
-    try:
-        requests.post(teams_url, json=card_payload)
-    except Exception as e:
-        print(f"Failed to send Teams notification: {e}")
+    try: requests.post(teams_url, json=card_payload)
+    except Exception as e: print(f"Teams Error: {e}")
 
-print("🤖 AutoOps Cloud Worker (Onboarding Edition) checking...")
+# --- MAIN LOOP ---
+print("🤖 AutoOps Cloud Worker (Dual-Channel) checking...")
 
 try:
     response = supabase.table("raw_alerts").select("*, tenants(name)").eq("status", "new").execute()
@@ -216,10 +201,11 @@ try:
             else:
                 tenant_name = "Unknown"
             
-            print(f"   -> Processing for {tenant_name}: {alert_dict.get('message', '')}")
+            alert_message = alert_dict.get("message", "")
+            print(f"   -> Processing for {tenant_name}: {alert_message}")
             
             try:
-                prompt = f"Analyze this alert: '{alert_dict.get('message', '')}'. If it's a new hire, suggest creating an Azure account. Otherwise suggest a Linux fix."
+                prompt = f"Analyze this alert: '{alert_message}'. If it's a new hire, suggest creating an Azure account. Otherwise suggest a Linux fix."
                 ai_resp = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}]
@@ -227,15 +213,17 @@ try:
                 solution = ai_resp.choices[0].message.content
                 if not solution:
                     solution = "No solution provided by AI"
-
-                action_result = execute_fix(solution, alert_dict.get('message', ''))
+                
+                action_result = execute_fix(solution, alert_message)
 
                 supabase.table("raw_alerts").update({
                     "status": "processed",
                     "ai_solution": solution + f"\n\n[System Log]: {action_result}"
                 }).eq("id", alert_dict.get("id")).execute()
                 
-                notify_teams(tenant_name, alert_dict.get('message', ''), solution, action_result)
+                # CALL BOTH NOTIFIERS
+                notify_slack(tenant_name, alert_message, solution, action_result)
+                notify_teams(tenant_name, alert_message, solution, action_result)
                 
             except Exception as inner_e:
                 print(f"❌ Error processing alert: {inner_e}")
