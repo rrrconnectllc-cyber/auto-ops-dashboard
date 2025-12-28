@@ -14,9 +14,14 @@ load_dotenv()
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 slack_url = os.environ.get("SLACK_WEBHOOK_URL")
+teams_url = os.environ.get("TEAMS_WEBHOOK_URL")
+openai_key = os.environ.get("OPENAI_API_KEY")
+
+assert url is not None, "SUPABASE_URL is required"
+assert key is not None, "SUPABASE_KEY is required"
 
 supabase: Client = create_client(url, key)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI(api_key=openai_key)
 
 # --- HELPER: Generate Strong Password ---
 def generate_password():
@@ -132,15 +137,64 @@ def execute_fix(solution_text, alert_message):
     
     return action_taken
 
-def notify_slack(tenant_name, alert_msg, solution, action):
-    if not slack_url: return
-    payload = {
-        "text": f"🚨 *Alert ({tenant_name}):* {alert_msg}\n"
-                f"🧠 *AI Analysis:* {solution}\n"
-                f"🛡️ *Action Taken:* {action}"
+def notify_teams(tenant_name, alert_msg, solution, action):
+    if not teams_url: return
+
+    # Adaptive Card Color Logic
+    color = "Good" if "SUCCESS" in action else "Attention"
+    
+    # The "Pretty" Teams Card
+    card_payload = {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "size": "Medium",
+                            "weight": "Bolder",
+                            "text": f"🚨 AutoOps Alert: {tenant_name}",
+                            "color": "Attention"
+                        },
+                        {
+                            "type": "FactSet",
+                            "facts": [
+                                {"title": "Issue:", "value": alert_msg},
+                                {"title": "AI Analysis:", "value": solution[:500] + "..." if len(solution) > 500 else solution}
+                            ]
+                        },
+                        {
+                            "type": "Container",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "🛡️ Automated Action Taken:",
+                                    "weight": "Bolder"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "text": action,
+                                    "color": "Good" if "SUCCESS" in action else "Warning",
+                                    "wrap": True
+                                }
+                            ],
+                            "style": "emphasis"
+                        }
+                    ],
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.2"
+                }
+            }
+        ]
     }
-    try: requests.post(slack_url, json=payload)
-    except: pass
+    
+    try:
+        requests.post(teams_url, json=card_payload)
+    except Exception as e:
+        print(f"Failed to send Teams notification: {e}")
 
 print("🤖 AutoOps Cloud Worker (Onboarding Edition) checking...")
 
@@ -181,7 +235,7 @@ try:
                     "ai_solution": solution + f"\n\n[System Log]: {action_result}"
                 }).eq("id", alert_dict.get("id")).execute()
                 
-                notify_slack(tenant_name, alert_dict.get('message', ''), solution, action_result)
+                notify_teams(tenant_name, alert_dict.get('message', ''), solution, action_result)
                 
             except Exception as inner_e:
                 print(f"❌ Error processing alert: {inner_e}")
