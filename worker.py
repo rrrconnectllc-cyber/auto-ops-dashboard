@@ -148,6 +148,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                 "content": {
                     "type": "AdaptiveCard",
                     "body": [
+                        # 1. HEADER
                         {
                             "type": "TextBlock",
                             "size": "Medium",
@@ -155,20 +156,47 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                             "text": f"🚨 AutoOps Alert: {tenant_name}",
                             "color": "Attention"
                         },
+                        # 2. THE ISSUE (Fact)
                         {
                             "type": "FactSet",
                             "facts": [
-                                {"title": "Issue:", "value": alert_msg},
-                                {"title": "AI Analysis:", "value": solution[:500] + "..."}
+                                {"title": "Issue:", "value": alert_msg}
                             ]
                         },
+                        # 3. SEPARATOR
+                        {"type": "Container", "items": [], "height": "10px"}, 
+                        
+                        # 4. AI ANALYSIS (Full Text - No Limit)
+                        {
+                            "type": "TextBlock",
+                            "text": "🧠 AI Analysis:",
+                            "weight": "Bolder"
+                        },
+                        {
+                            "type": "TextBlock",
+                            "text": solution,  # <--- CHANGED: No more [:500] limit!
+                            "wrap": True,      # Allows text to flow to new lines
+                            "size": "Small",
+                            "isSubtle": True
+                        },
+                        
+                        # 5. ACTION BOX (Colored Background)
                         {
                             "type": "Container",
                             "items": [
-                                {"type": "TextBlock", "text": "🛡️ Automated Action Taken:", "weight": "Bolder"},
-                                {"type": "TextBlock", "text": action, "color": "Good" if "SUCCESS" in action else "Warning", "wrap": True}
+                                {
+                                    "type": "TextBlock",
+                                    "text": "🛡️ Automated Action Taken:",
+                                    "weight": "Bolder"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "text": action,
+                                    "color": "Good" if "SUCCESS" in action else "Warning",
+                                    "wrap": True
+                                }
                             ],
-                            "style": "emphasis"
+                            "style": "emphasis" # Gives it the grey background
                         }
                     ],
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
