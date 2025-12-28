@@ -139,6 +139,87 @@ def notify_teams(tenant_name, alert_msg, solution, action):
     if not teams_url: return
     print("📨 Sending Teams Alert...")
     
+    # Split long solution into chunks to avoid Teams display limits
+    # Teams TextBlock has ~8000 char limit, but we'll use 3000 for better display
+    def split_text(text, max_length=3000):
+        """Split text into chunks, trying to break at sentence boundaries"""
+        if len(text) <= max_length:
+            return [text]
+        chunks = []
+        current = text
+        while len(current) > max_length:
+            # Try to break at a sentence end (., !, ?) or newline
+            break_point = max_length
+            for sep in ['\n\n', '\n', '. ', '! ', '? ']:
+                idx = current.rfind(sep, 0, max_length)
+                if idx > max_length * 0.7:  # Only break if we're at least 70% through
+                    break_point = idx + len(sep)
+                    break
+            chunks.append(current[:break_point].strip())
+            current = current[break_point:].strip()
+        if current:
+            chunks.append(current)
+        return chunks
+    
+    solution_chunks = split_text(solution) if solution else [""]
+    
+    # Build body with all solution chunks
+    body = [
+        # 1. HEADER
+        {
+            "type": "TextBlock",
+            "size": "Medium",
+            "weight": "Bolder",
+            "text": f"🚨 AutoOps Alert: {tenant_name}",
+            "color": "Attention"
+        },
+        # 2. THE ISSUE (Fact)
+        {
+            "type": "FactSet",
+            "facts": [
+                {"title": "Issue:", "value": alert_msg}
+            ]
+        },
+        # 3. SEPARATOR
+        {"type": "Container", "items": [], "height": "10px"}, 
+        
+        # 4. AI ANALYSIS HEADER
+        {
+            "type": "TextBlock",
+            "text": "🧠 AI Analysis:",
+            "weight": "Bolder"
+        }
+    ]
+    
+    # Add all solution chunks
+    for chunk in solution_chunks:
+        body.append({
+            "type": "TextBlock",
+            "text": chunk,
+            "wrap": True,
+            "size": "Small",
+            "isSubtle": True
+        })
+    
+    # 5. ACTION BOX (Colored Background)
+    body.append({
+        "type": "Container",
+        "items": [
+            {
+                "type": "TextBlock",
+                "text": "🛡️ Automated Action Taken:",
+                "weight": "Bolder"
+            },
+            {
+                "type": "TextBlock",
+                "text": action,
+                "color": "Good" if "SUCCESS" in action else "Warning",
+                "wrap": True
+            }
+        ],
+        "style": "emphasis"
+    })
+    
     # Adaptive Card Logic
     card_payload = {
         "type": "message",
@@ -147,58 +228,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                 "contentType": "application/vnd.microsoft.card.adaptive",
                 "content": {
                     "type": "AdaptiveCard",
-                    "body": [
-                        # 1. HEADER
-                        {
-                            "type": "TextBlock",
-                            "size": "Medium",
-                            "weight": "Bolder",
-                            "text": f"🚨 AutoOps Alert: {tenant_name}",
-                            "color": "Attention"
-                        },
-                        # 2. THE ISSUE (Fact)
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Issue:", "value": alert_msg}
-                            ]
-                        },
-                        # 3. SEPARATOR
-                        {"type": "Container", "items": [], "height": "10px"}, 
-                        
-                        # 4. AI ANALYSIS (Full Text - No Limit)
-                        {
-                            "type": "TextBlock",
-                            "text": "🧠 AI Analysis:",
-                            "weight": "Bolder"
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": solution,  # <--- CHANGED: No more [:500] limit!
-                            "wrap": True,      # Allows text to flow to new lines
-                            "size": "Small",
-                            "isSubtle": True
-                        },
-                        
-                        # 5. ACTION BOX (Colored Background)
-                        {
-                            "type": "Container",
-                            "items": [
-                                {
-                                    "type": "TextBlock",
-                                    "text": "🛡️ Automated Action Taken:",
-                                    "weight": "Bolder"
-                                },
-                                {
-                                    "type": "TextBlock",
-                                    "text": action,
-                                    "color": "Good" if "SUCCESS" in action else "Warning",
-                                    "wrap": True
-                                }
-                            ],
-                            "style": "emphasis" # Gives it the grey background
-                        }
-                    ],
+                    "body": body,
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "version": "1.2"
                 }
