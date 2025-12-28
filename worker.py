@@ -263,3 +263,6 @@ try:
 
 except Exception as e:
     print(f"❌ FATAL ERROR: {e}")
+
+
+    # Force update: Debug mode enabled
