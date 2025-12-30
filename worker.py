@@ -30,7 +30,8 @@ def generate_password():
     return "Aa1!" + "".join(random.choice(chars) for _ in range(12))
 
 # --- AZURE SKILLS ---
-def get_azure_token():
+def get_azure_token(scope="https://graph.microsoft.com/.default"):
+    # Updated to accept different scopes (Graph vs. Management)
     tenant_id = os.environ.get("AZURE_TENANT_ID")
     client_id = os.environ.get("AZURE_CLIENT_ID")
     client_secret = os.environ.get("AZURE_CLIENT_SECRET")
@@ -44,7 +45,7 @@ def get_azure_token():
         client_id=client_id,
         client_secret=client_secret,
     )
-    return credential.get_token("https://graph.microsoft.com/.default").token
+    return credential.get_token(scope).token
 
 def get_default_domain(headers):
     try:
@@ -58,7 +59,7 @@ def get_default_domain(headers):
 def create_azure_user(name):
     try:
         print(f"☁️ Attempting to onboard: {name}...")
-        token = get_azure_token()
+        token = get_azure_token("https://graph.microsoft.com/.default")
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         
         domain = get_default_domain(headers)
@@ -90,7 +91,7 @@ def create_azure_user(name):
 
 def get_intune_device_count():
     try:
-        token = get_azure_token()
+        token = get_azure_token("https://graph.microsoft.com/.default")
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.get("https://graph.microsoft.com/v1.0/deviceManagement/managedDevices", headers=headers)
         if response.status_code == 200:
@@ -99,6 +100,32 @@ def get_intune_device_count():
         return f"⚠️ Azure Error: {response.status_code}"
     except Exception as e:
         return f"❌ Error: {str(e)}"
+
+# --- NEW SKILL: RESTART VM ---
+def restart_azure_vm(vm_name, resource_group="AutoOps-RG"):
+    try:
+        print(f"⚡ Attempting to restart VM: {vm_name}...")
+        subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        if not subscription_id:
+            return "❌ Error: AZURE_SUBSCRIPTION_ID is missing."
+
+        # Note: We use the MANAGEMENT scope here, not Graph
+        token = get_azure_token("https://management.azure.com/.default")
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Azure REST API for VM Restart
+        url = f"https://management.azure.com/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Compute/virtualMachines/{vm_name}/restart?api-version=2023-03-01"
+        
+        response = requests.post(url, headers=headers)
+        
+        if response.status_code == 202: # 202 Accepted means "I started working on it"
+            return f"✅ SUCCESS: Restart command sent to VM '{vm_name}'."
+        elif response.status_code == 200:
+            return f"✅ SUCCESS: VM '{vm_name}' restarted successfully."
+        else:
+            return f"❌ Azure VM Error: {response.status_code} - {response.text}"
+    except Exception as e:
+        return f"❌ Connection Failed: {str(e)}"
 
 # --- ACTION LOGIC ---
 SAFE_COMMANDS = {
@@ -115,6 +142,11 @@ def execute_fix(solution_text, alert_message):
         action_taken = create_azure_user(name_part)
     elif "intune" in msg_lower or "device count" in msg_lower:
         action_taken = get_intune_device_count()
+    elif "vm" in msg_lower and "restart" in msg_lower:
+        # Extract VM name if possible, otherwise default to a demo VM
+        # In a real app, the AI would extract the exact VM name.
+        # For this demo, we assume the VM is named "Production-VM"
+        action_taken = restart_azure_vm("Production-VM", "AutoOps-RG") 
     elif "restart" in solution_text.lower():
         action_taken = f"⚡ EXECUTED: {SAFE_COMMANDS['restart_service']}"
     elif "disk space" in solution_text.lower():
@@ -142,8 +174,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
     
     print(f"📨 DEBUG: Attempting to send to Teams... (URL starts with {teams_url[:20]}...)")
     
-    # --- SIMPLIFIED "SAFE MODE" CARD ---
-    # No FactSets, No Colors, No Containers. Just Text.
+    # SIMPLE SAFE MODE CARD
     card_payload = {
         "type": "message",
         "attachments": [
@@ -175,7 +206,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                         },
                         {
                             "type": "TextBlock",
-                            "text": solution[:3000] + "...", # Safe limit
+                            "text": solution[:3000] + "...", 
                             "wrap": True,
                             "size": "Small"
                         },
@@ -192,7 +223,7 @@ def notify_teams(tenant_name, alert_msg, solution, action):
                         }
                     ],
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.4" # Updated to 1.4 for better compatibility
+                    "version": "1.4"
                 }
             }
         ]
@@ -201,7 +232,6 @@ def notify_teams(tenant_name, alert_msg, solution, action):
     try:
         r = requests.post(teams_url, json=card_payload)
         print(f"🔍 TEAMS STATUS CODE: {r.status_code}")
-        print(f"📝 TEAMS RESPONSE BODY: {r.text}")
     except Exception as e:
         print(f"❌ TEAMS FATAL ERROR: {e}")
 
@@ -215,29 +245,24 @@ try:
     if alerts:
         print(f"🚨 Found {len(alerts)} new alerts!")
         for alert in alerts:
-            # Type check: ensure alert is a dict
-            if not isinstance(alert, dict):
-                continue
+            if not isinstance(alert, dict): continue
             
             alert_dict: dict[str, Any] = cast(dict[str, Any], alert)
             tenant_data = alert_dict.get("tenants")
-            if isinstance(tenant_data, dict):
-                tenant_name = tenant_data.get("name", "Unknown")
-            else:
-                tenant_name = "Unknown"
+            tenant_name = tenant_data.get("name", "Unknown") if isinstance(tenant_data, dict) else "Unknown"
             
             alert_message = alert_dict.get("message", "")
             print(f"   -> Processing for {tenant_name}: {alert_message}")
             
             try:
-                prompt = f"Analyze this alert: '{alert_message}'. If it's a new hire, suggest creating an Azure account. Otherwise suggest a Linux fix."
+                # UPDATED PROMPT: Now knows about VMs
+                prompt = f"Analyze this alert: '{alert_message}'. If it's a new hire, suggest creating an Azure account. If it mentions a frozen VM, suggest restarting the VM. Otherwise suggest a Linux fix."
                 ai_resp = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 solution = ai_resp.choices[0].message.content
-                if not solution:
-                    solution = "No solution provided by AI"
+                if not solution: solution = "No solution provided by AI"
                 
                 action_result = execute_fix(solution, alert_message)
 
@@ -246,7 +271,6 @@ try:
                     "ai_solution": solution + f"\n\n[System Log]: {action_result}"
                 }).eq("id", alert_dict.get("id")).execute()
                 
-                # CALL BOTH NOTIFIERS
                 notify_slack(tenant_name, alert_message, solution, action_result)
                 notify_teams(tenant_name, alert_message, solution, action_result)
                 
@@ -257,6 +281,3 @@ try:
 
 except Exception as e:
     print(f"❌ FATAL ERROR: {e}")
-
-
-    # Force update: Debug mode enabled
