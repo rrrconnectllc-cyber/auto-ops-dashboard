@@ -1,4 +1,6 @@
 import os
+import time
+import logging
 import requests
 import json
 import random
@@ -8,6 +10,10 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
 from azure.identity import ClientSecretCredential
+
+# Configure logging to see what's happening on Render
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 1. Setup
 load_dotenv()
@@ -235,24 +241,39 @@ def notify_teams(tenant_name, alert_msg, solution, action):
     except Exception as e:
         print(f"❌ TEAMS FATAL ERROR: {e}")
 
-# --- MAIN LOOP ---
-print("🤖 AutoOps Cloud Worker (Dual-Channel) checking...")
+# --- BOT LOGIC FUNCTION ---
+def run_automation_task(api_key: str | None = None, api_secret: str | None = None, target_settings: dict[str, Any] | None = None, tenant_id: int | None = None, tenant_name: str = "Unknown"):
+    """
+    Core bot function that processes alerts for a specific user/tenant.
+    This represents your core bot function that runs automation tasks.
+    """
+    logger.info(f"Processing automation task for tenant: {tenant_name}")
+    
+    try:
+        # Fetch alerts for this specific tenant
+        query = supabase.table("raw_alerts").select("*, tenants(name)").eq("status", "new")
+        if tenant_id:
+            query = query.eq("tenant_id", tenant_id)
+        
+        response = query.execute()
+        alerts = response.data
 
-try:
-    response = supabase.table("raw_alerts").select("*, tenants(name)").eq("status", "new").execute()
-    alerts = response.data
+        if not alerts:
+            logger.info(f"No new alerts found for {tenant_name}")
+            return
 
-    if alerts:
-        print(f"🚨 Found {len(alerts)} new alerts!")
+        logger.info(f"Found {len(alerts)} new alerts for {tenant_name}!")
+        
         for alert in alerts:
-            if not isinstance(alert, dict): continue
+            if not isinstance(alert, dict): 
+                continue
             
             alert_dict: dict[str, Any] = cast(dict[str, Any], alert)
             tenant_data = alert_dict.get("tenants")
-            tenant_name = tenant_data.get("name", "Unknown") if isinstance(tenant_data, dict) else "Unknown"
+            current_tenant_name = tenant_data.get("name", tenant_name) if isinstance(tenant_data, dict) else tenant_name
             
             alert_message = alert_dict.get("message", "")
-            print(f"   -> Processing for {tenant_name}: {alert_message}")
+            logger.info(f"   -> Processing for {current_tenant_name}: {alert_message}")
             
             try:
                 # UPDATED PROMPT: Now knows about VMs
@@ -262,7 +283,8 @@ try:
                     messages=[{"role": "user", "content": prompt}]
                 )
                 solution = ai_resp.choices[0].message.content
-                if not solution: solution = "No solution provided by AI"
+                if not solution: 
+                    solution = "No solution provided by AI"
                 
                 action_result = execute_fix(solution, alert_message)
 
@@ -271,13 +293,102 @@ try:
                     "ai_solution": solution + f"\n\n[System Log]: {action_result}"
                 }).eq("id", alert_dict.get("id")).execute()
                 
-                notify_slack(tenant_name, alert_message, solution, action_result)
-                notify_teams(tenant_name, alert_message, solution, action_result)
+                notify_slack(current_tenant_name, alert_message, solution, action_result)
+                notify_teams(current_tenant_name, alert_message, solution, action_result)
                 
             except Exception as inner_e:
-                print(f"❌ Error processing alert: {inner_e}")
-    else:
-        print("✅ No new alerts found.")
+                logger.error(f"Error processing alert for {current_tenant_name}: {inner_e}")
+                
+    except Exception as e:
+        logger.error(f"Error in automation task for {tenant_name}: {e}")
+        raise
 
-except Exception as e:
-    print(f"❌ FATAL ERROR: {e}")
+# --- BATCH JOB FUNCTION ---
+def run_batch_job():
+    """
+    The main engine. It loops through the database and runs the bot 
+    for every user who has configured their keys.
+    """
+    logger.info("--- Starting Batch Job ---")
+    
+    try:
+        # 1. Fetch all tenants/users who have API keys configured
+        # In Supabase, we check the tenants table for users with api_key set
+        # Adjust the query based on your actual table structure
+        response = supabase.table("tenants").select("id, name, api_key, email").execute()
+        all_tenants = response.data or []
+        
+        # Filter for tenants that have an API key configured (not null/empty)
+        # Also filter out None values and ensure tenant is a dict
+        active_tenants: list[dict[str, Any]] = [
+            cast(dict[str, Any], t) for t in all_tenants 
+            if t is not None and isinstance(t, dict) and isinstance(t.get("api_key"), str)
+        ]
+        
+        if not active_tenants:
+            logger.info("No active users found. Waiting for next cycle.")
+            return
+
+        logger.info(f"Found {len(active_tenants)} users to process.")
+
+        # 2. The Loop
+        for tenant in active_tenants:
+            tenant_id_raw = tenant.get("id")
+            tenant_id: int | None
+            if tenant_id_raw is not None and isinstance(tenant_id_raw, (int, str)):
+                tenant_id = int(tenant_id_raw)
+            else:
+                tenant_id = None
+                
+            tenant_name_raw = tenant.get("name", "Unknown")
+            tenant_name: str = str(tenant_name_raw) if tenant_name_raw is not None else "Unknown"
+            
+            tenant_email_raw = tenant.get("email", "Unknown")
+            tenant_email: str = str(tenant_email_raw) if tenant_email_raw is not None else "Unknown"
+            
+            api_key_raw = tenant.get("api_key")
+            api_key: str | None
+            if api_key_raw is not None:
+                api_key = str(api_key_raw)
+            else:
+                api_key = None
+            
+            logger.info(f"Processing for User: {tenant_email} (Tenant: {tenant_name})")
+            
+            try:
+                # 3. Execute the bot logic using THIS user's specific configuration
+                # We pass the tenant info and any API keys/settings to the function
+                # Type casts are needed because Supabase returns JSON types
+                run_automation_task(
+                    api_key=cast(str | None, api_key),
+                    api_secret=None,  # Add if you have api_secret in your schema
+                    target_settings=None,  # Add if you have target_settings in your schema
+                    tenant_id=cast(int | None, tenant_id),
+                    tenant_name=cast(str, tenant_name)
+                )
+                logger.info(f"Success for {tenant_email}")
+                
+            except Exception as e:
+                # 4. Error Handling (The "Firewall")
+                # If User A fails, we log it and continue to User B.
+                logger.error(f"Error processing for {tenant_email}: {e}")
+                continue
+
+        logger.info("--- Batch Job Finished ---")
+        
+    except Exception as e:
+        logger.error(f"FATAL ERROR in batch job: {e}")
+
+# --- MAIN ENTRY POINT ---
+if __name__ == "__main__":
+    # In a real production app, you might use a scheduler like Celery or APScheduler.
+    # For now, a simple while loop simulates a worker running every X minutes.
+    logger.info("🤖 AutoOps Cloud Worker (Batch Mode) starting...")
+    
+    while True:
+        run_batch_job()
+        
+        # Wait for 10 minutes (600 seconds) before running again
+        # This prevents hitting API rate limits
+        logger.info("Sleeping for 10 minutes...")
+        time.sleep(600)
